@@ -1,0 +1,189 @@
+META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
+# 以上路径里进行批量导入组件
+
+
+org.springframework.boot.autoconfigure.web.client.RestTemplateAutoConfiguration
+org.springframework.boot.autoconfigure.web.embedded.EmbeddedWebServerFactoryCustomizerAutoConfiguration
+org.springframework.boot.autoconfigure.web.reactive.HttpHandlerAutoConfiguration
+org.springframework.boot.autoconfigure.web.reactive.ReactiveMultipartAutoConfiguration
+org.springframework.boot.autoconfigure.web.reactive.ReactiveWebServerFactoryAutoConfiguration
+org.springframework.boot.autoconfigure.web.reactive.WebFluxAutoConfiguration
+org.springframework.boot.autoconfigure.web.reactive.WebSessionIdResolverAutoConfiguration
+org.springframework.boot.autoconfigure.web.reactive.error.ErrorWebFluxAutoConfiguration
+org.springframework.boot.autoconfigure.web.reactive.function.client.ClientHttpConnectorAutoConfiguration
+org.springframework.boot.autoconfigure.web.reactive.function.client.WebClientAutoConfiguration
+#=======================================
+org.springframework.boot.autoconfigure.web.servlet.DispatcherServletAutoConfiguration
+org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration
+org.springframework.boot.autoconfigure.web.servlet.error.ErrorMvcAutoConfiguration
+org.springframework.boot.autoconfigure.web.servlet.HttpEncodingAutoConfiguration
+org.springframework.boot.autoconfigure.web.servlet.MultipartAutoConfiguration
+org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration
+
+绑定了配置文件的一堆项:
+1. 定制springmvc 以 spring.mvc开头
+2. web场景的通用配置: spring.web
+3. 文件上传: spring.servlet.multipart
+4. 服务器配置: 以server开头
+
+生效条件:
+
+@AutoConfiguration(after = { 
+		DispatcherServletAutoConfiguration.class (mvc配置), 
+		TaskExecutionAutoConfiguration.class,(异步任务)  
+		ValidationAutoConfiguration.class(数据校验) })  // 在这些自动配置之后
+		
+		
+@ConditionalOnWebApplication(type = Type.SERVLET) 
+//如果是web应用就生效(并且标志了类型必须是servlet)  reactive 响应式web应用
+
+
+@ConditionalOnClass({ Servlet.class, DispatcherServlet.class, WebMvcConfigurer.class })
+// 导入了Servlet.class就默认导入DispatcherServlet再导入WebMvcConfigurer
+
+@ConditionalOnMissingBean(WebMvcConfigurationSupport.class
+// 容器中没有这个WebMvcConfigurationSupport 的类型bean时生效
+
+
+@AutoConfigureOrder(Ordered.HIGHEST_PRECEDENCE + 10) 自动配置文件的优先级
+
+
+@ImportRuntimeHints(WebResourcesRuntimeHints.class)  导入指标统计
+
+效果:
+1. HiddenHttpMethodFilter    页面表单 Rest请求 (get/post/put/delete)
+2. FormContentFilter	表单内容 get(存放在url后),post(放在请求体里面),put/delete 会被忽略需要加上这个注解
+
+
+${server.error.path:${error.path:/error}}
+
+先看配置文件有没有配置 server.error.path 
+如果没有那么继续找 ${error.path:/error}
+找配置文件中有没有配置 error.path, 如果还没有那么就执行 /error 浏览器路径
+
+
+错误处理的两个内容协商机制:
+
+电脑端默认使用这个方法进行错误处理机制 (返回html页面)
+@RequestMapping(produces = MediaType.TEXT_HTML_VALUE)
+public ModelAndView errorHtml(HttpServletRequest request, HttpServletResponse response) {
+	HttpStatus status = getStatus(request);
+	Map<String, Object> model = Collections
+		.unmodifiableMap(getErrorAttributes(request, getErrorAttributeOptions(request, MediaType.TEXT_HTML)));
+	response.setStatus(status.value());
+	ModelAndView modelAndView = resolveErrorView(request, response, status, model);
+	return (modelAndView != null) ? modelAndView : new ModelAndView("error", model);
+}
+
+移动端默认使用这个方法进行错误处理机制 (返回json数据)
+@RequestMapping
+public ResponseEntity<Map<String, Object>> error(HttpServletRequest request) {
+	HttpStatus status = getStatus(request);
+	if (status == HttpStatus.NO_CONTENT) {
+		return new ResponseEntity<>(status);
+	}
+	Map<String, Object> body = getErrorAttributes(request, getErrorAttributeOptions(request, MediaType.ALL));
+	return new ResponseEntity<>(body, status);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+ModelAndView modelAndView = resolveErrorView(request, response, status, model);
+
+
+@Bean
+@ConditionalOnBean({DispatcherServlet.class})
+@ConditionalOnMissingBean({ErrorViewResolver.class})
+DefaultErrorViewResolver conventionErrorViewResolver() {
+	return new DefaultErrorViewResolver(this.applicationContext, this.resources);
+}
+
+
+
+
+
+
+
+
+
+@Override
+public ModelAndView resolveErrorView(HttpServletRequest request, HttpStatus status, Map<String, Object> model) {
+	ModelAndView modelAndView = resolve(String.valueOf(status.value()), model);
+	//如果静态资源都找不到那么就模糊找页 查询 class:path/templates/error/4xx.html or 5xx.html
+	if (modelAndView == null && SERIES_VIEWS.containsKey(status.series())) {
+		modelAndView = resolve(SERIES_VIEWS.get(status.series()), model);
+	}
+	return modelAndView;
+}
+
+SERIES_VIEWS=>
+	private static final Map<Series, String> SERIES_VIEWS;
+		static {
+			Map<Series, String> views = new EnumMap<>(Series.class);
+			views.put(Series.CLIENT_ERROR, "4xx");
+			views.put(Series.SERVER_ERROR, "5xx");
+			SERIES_VIEWS = Collections.unmodifiableMap(views);
+		}
+
+
+private ModelAndView resolve(String viewName, Map<String, Object> model) {
+	String errorViewName = "error/" + viewName;    // 名称:   error/405
+	TemplateAvailabilityProvider provider = this.templateAvailabilityProviders.getProvider(errorViewName,
+			this.applicationContext);  // 去找模板引擎带入 error/405参数查找
+	if (provider != null) {   //如果找到了那么就直接返回这个视图
+		return new ModelAndView(errorViewName, model);
+	}
+	//如果没找到继续调用 resolveResource方法并带入 error/405参数
+	return resolveResource(errorViewName, model);
+}
+
+
+viewName => error/405 model => xx
+private ModelAndView resolveResource(String viewName, Map<String, Object> model) {
+	//进行循环遍历在静态资源目录中查找 如果找到了那么就返回 error/405.html
+	for (String location : this.resources.getStaticLocations()) {
+		try {
+			Resource resource = this.applicationContext.getResource(location);
+			resource = resource.createRelative(viewName + ".html");
+			if (resource.exists()) {
+				return new ModelAndView(new HtmlResourceView(resource), model);
+			}
+		}
+		catch (Exception ex) {
+		}
+	}
+	return null;
+}
+
+
+
+
+
+
+
+
+
+return (modelAndView != null) ? modelAndView : new ModelAndView("error", model);
+# 表示如果模板引擎下有error页，那么就直接转发error页
+
+
+
+
+org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+	配置数据源的自动配置类 
+	所有和配置类有关的全在该类上引用的 @EnableConfigurationProperties(DataSourceProperties.class)中
+
+
+org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration
+org.springframework.boot.autoconfigure.jdbc.JndiDataSourceAutoConfiguration
+org.springframework.boot.autoconfigure.jdbc.XADataSourceAutoConfiguration
+org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
